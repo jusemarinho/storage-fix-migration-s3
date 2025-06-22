@@ -19,8 +19,6 @@ export const DBMigration = {
   add_owner_id_column_deprecate_owner: 18,
   'alter-default-value-objects-id': 19,
   'list-objects-with-delimiter': 20,
-  's3-multipart-uploads': 21,
-  's3-multipart-uploads-big-ints': 22,
   'optimize-search-function': 23,
   'operation-function': 24,
   'custom-metadata': 25,
