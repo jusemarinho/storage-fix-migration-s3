@@ -42,9 +42,9 @@ BEGIN
                 storage.s3_multipart_uploads
             WHERE
                 bucket_id = $5 AND
-                key ILIKE $1 || ''%'' AND
+                key ILIKE $1 || '%' AND
                 CASE
-                    WHEN $4 != '''' AND $6 = '''' THEN
+                    WHEN $4 != '' AND $6 = '' THEN
                         CASE
                             WHEN position($2 IN substring(key from length($1) + 1)) > 0 THEN
                                 substring(key from 1 for length($1) + position($2 IN substring(key from length($1) + 1))) COLLATE "C" > $4
@@ -55,7 +55,7 @@ BEGIN
                         true
                 END AND
                 CASE
-                    WHEN $6 != '''' THEN
+                    WHEN $6 != '' THEN
                         id COLLATE "C" > $6
                     ELSE
                         true
