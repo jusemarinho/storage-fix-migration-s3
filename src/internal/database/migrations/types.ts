@@ -36,4 +36,5 @@ export const DBMigration = {
   'add-insert-trigger-prefixes': 35,
   'optimise-existing-functions': 36,
   'add-bucket-name-length-trigger': 37,
+  'fix-s3-multipart-uploads-syntax': 38,
 }
