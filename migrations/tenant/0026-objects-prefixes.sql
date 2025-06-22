@@ -1,18 +1,18 @@
 -- Add level column to objects
 ALTER TABLE storage.objects ADD COLUMN IF NOT EXISTS level INT NULL;
 
---- Index Functions
-CREATE OR REPLACE FUNCTION "storage"."get_level"("name" text)
+--- Index Functions (must be created before table that uses them)
+CREATE OR REPLACE FUNCTION storage.get_level(name text)
     RETURNS int
 AS $func$
-SELECT array_length(string_to_array("name", '/'), 1);
+SELECT array_length(string_to_array(name, '/'), 1);
 $func$ LANGUAGE SQL IMMUTABLE STRICT;
 
 -- Table
 CREATE TABLE IF NOT EXISTS "storage"."prefixes" (
     "bucket_id" text,
     "name" text COLLATE "C" NOT NULL,
-    "level" int GENERATED ALWAYS AS ("storage"."get_level"("name")) STORED,
+    "level" int GENERATED ALWAYS AS (storage.get_level("name")) STORED,
     "created_at" timestamptz DEFAULT now(),
     "updated_at" timestamptz DEFAULT now(),
     CONSTRAINT "prefixes_bucketId_fkey" FOREIGN KEY ("bucket_id") REFERENCES "storage"."buckets"("id"),
@@ -22,18 +22,18 @@ CREATE TABLE IF NOT EXISTS "storage"."prefixes" (
 ALTER TABLE storage.prefixes ENABLE ROW LEVEL SECURITY;
 
 -- Functions
-CREATE OR REPLACE FUNCTION "storage"."get_prefix"("name" text)
+CREATE OR REPLACE FUNCTION storage.get_prefix(name text)
     RETURNS text
 AS $func$
 SELECT
-    CASE WHEN strpos("name", '/') > 0 THEN
-             regexp_replace("name", '[\/]{1}[^\/]+\/?$', '')
+    CASE WHEN strpos(name, '/') > 0 THEN
+             regexp_replace(name, '[\/]{1}[^\/]+\/?$', '')
          ELSE
              ''
         END;
 $func$ LANGUAGE SQL IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION "storage"."get_prefixes"("name" text)
+CREATE OR REPLACE FUNCTION storage.get_prefixes(name text)
     RETURNS text[]
 AS $func$
 DECLARE
@@ -42,7 +42,7 @@ DECLARE
     prefix text;
 BEGIN
     -- Split the name into parts by '/'
-    parts := string_to_array("name", '/');
+    parts := string_to_array(name, '/');
     prefixes := '{}';
 
     -- Construct the prefixes, stopping one level below the last part
@@ -55,7 +55,7 @@ BEGIN
 END;
 $func$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION "storage"."add_prefixes"(
+CREATE OR REPLACE FUNCTION storage.add_prefixes(
     "_bucket_id" TEXT,
     "_name" TEXT
 )
@@ -65,7 +65,7 @@ AS $func$
 DECLARE
     prefixes text[];
 BEGIN
-    prefixes := "storage"."get_prefixes"("_name");
+    prefixes := storage.get_prefixes("_name");
 
     IF array_length(prefixes, 1) > 0 THEN
         INSERT INTO storage.prefixes (name, bucket_id)
@@ -74,7 +74,7 @@ BEGIN
 END;
 $func$ LANGUAGE plpgsql VOLATILE;
 
-CREATE OR REPLACE FUNCTION "storage"."delete_prefix" (
+CREATE OR REPLACE FUNCTION storage.delete_prefix (
     "_bucket_id" TEXT,
     "_name" TEXT
 ) RETURNS boolean
@@ -85,14 +85,14 @@ BEGIN
     IF EXISTS(
         SELECT FROM "storage"."prefixes"
         WHERE "prefixes"."bucket_id" = "_bucket_id"
-          AND level = "storage"."get_level"("_name") + 1
+          AND level = storage.get_level("_name") + 1
           AND "prefixes"."name" COLLATE "C" LIKE "_name" || '/%'
         LIMIT 1
     )
     OR EXISTS(
         SELECT FROM "storage"."objects"
         WHERE "objects"."bucket_id" = "_bucket_id"
-          AND "storage"."get_level"("objects"."name") = "storage"."get_level"("_name") + 1
+          AND storage.get_level("objects"."name") = storage.get_level("_name") + 1
           AND "objects"."name" COLLATE "C" LIKE "_name" || '/%'
         LIMIT 1
     ) THEN
@@ -101,7 +101,7 @@ BEGIN
     ELSE
         DELETE FROM "storage"."prefixes"
         WHERE "prefixes"."bucket_id" = "_bucket_id"
-          AND level = "storage"."get_level"("_name")
+          AND level = storage.get_level("_name")
           AND "prefixes"."name" = "_name";
         RETURN true;
     END IF;
@@ -109,36 +109,36 @@ END;
 $func$ LANGUAGE plpgsql VOLATILE;
 
 -- Triggers
-CREATE OR REPLACE FUNCTION "storage"."prefixes_insert_trigger"()
+CREATE OR REPLACE FUNCTION storage.prefixes_insert_trigger()
     RETURNS trigger
 AS $func$
 BEGIN
-    PERFORM "storage"."add_prefixes"(NEW."bucket_id", NEW."name");
+    PERFORM storage.add_prefixes(NEW."bucket_id", NEW."name");
     RETURN NEW;
 END;
 $func$ LANGUAGE plpgsql VOLATILE;
 
-CREATE OR REPLACE FUNCTION "storage"."objects_insert_prefix_trigger"()
+CREATE OR REPLACE FUNCTION storage.objects_insert_prefix_trigger()
     RETURNS trigger
 AS $func$
 BEGIN
-    PERFORM "storage"."add_prefixes"(NEW."bucket_id", NEW."name");
-    NEW.level := "storage"."get_level"(NEW."name");
+    PERFORM storage.add_prefixes(NEW."bucket_id", NEW."name");
+    NEW.level := storage.get_level(NEW."name");
 
     RETURN NEW;
 END;
 $func$ LANGUAGE plpgsql VOLATILE;
 
-CREATE OR REPLACE FUNCTION "storage"."delete_prefix_hierarchy_trigger"()
+CREATE OR REPLACE FUNCTION storage.delete_prefix_hierarchy_trigger()
     RETURNS trigger
 AS $func$
 DECLARE
     prefix text;
 BEGIN
-    prefix := "storage"."get_prefix"(OLD."name");
+    prefix := storage.get_prefix(OLD."name");
 
     IF coalesce(prefix, '') != '' THEN
-        PERFORM "storage"."delete_prefix"(OLD."bucket_id", prefix);
+        PERFORM storage.delete_prefix(OLD."bucket_id", prefix);
     END IF;
 
     RETURN OLD;
@@ -149,24 +149,24 @@ $func$ LANGUAGE plpgsql VOLATILE;
 CREATE OR REPLACE TRIGGER "prefixes_delete_hierarchy"
     AFTER DELETE ON "storage"."prefixes"
     FOR EACH ROW
-EXECUTE FUNCTION "storage"."delete_prefix_hierarchy_trigger"();
+EXECUTE FUNCTION storage.delete_prefix_hierarchy_trigger();
 
 -- "storage"."objects"
 CREATE OR REPLACE TRIGGER "objects_insert_create_prefix"
     BEFORE INSERT ON "storage"."objects"
     FOR EACH ROW
-EXECUTE FUNCTION "storage"."objects_insert_prefix_trigger"();
+EXECUTE FUNCTION storage.objects_insert_prefix_trigger();
 
 CREATE OR REPLACE TRIGGER "objects_update_create_prefix"
     BEFORE UPDATE ON "storage"."objects"
     FOR EACH ROW
     WHEN (NEW.name != OLD.name)
-EXECUTE FUNCTION "storage"."objects_insert_prefix_trigger"();
+EXECUTE FUNCTION storage.objects_insert_prefix_trigger();
 
 CREATE OR REPLACE TRIGGER "objects_delete_delete_prefix"
     AFTER DELETE ON "storage"."objects"
     FOR EACH ROW
-EXECUTE FUNCTION "storage"."delete_prefix_hierarchy_trigger"();
+EXECUTE FUNCTION storage.delete_prefix_hierarchy_trigger();
 
 -- Permissions
 DO $$
