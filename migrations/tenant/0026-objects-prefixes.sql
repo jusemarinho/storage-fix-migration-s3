@@ -12,7 +12,7 @@ $func$ LANGUAGE SQL IMMUTABLE STRICT;
 CREATE TABLE IF NOT EXISTS "storage"."prefixes" (
     "bucket_id" text,
     "name" text COLLATE "C" NOT NULL,
-    "level" int GENERATED ALWAYS AS (storage.get_level("name")) STORED,
+    "level" int,
     "created_at" timestamptz DEFAULT now(),
     "updated_at" timestamptz DEFAULT now(),
     CONSTRAINT "prefixes_bucketId_fkey" FOREIGN KEY ("bucket_id") REFERENCES "storage"."buckets"("id"),
@@ -20,6 +20,21 @@ CREATE TABLE IF NOT EXISTS "storage"."prefixes" (
 );
 
 ALTER TABLE storage.prefixes ENABLE ROW LEVEL SECURITY;
+
+-- Trigger to update level column
+CREATE OR REPLACE FUNCTION storage.update_prefix_level()
+    RETURNS trigger
+AS $func$
+BEGIN
+    NEW.level := storage.get_level(NEW.name);
+    RETURN NEW;
+END;
+$func$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE TRIGGER "prefix_update_level"
+    BEFORE INSERT OR UPDATE ON "storage"."prefixes"
+    FOR EACH ROW
+EXECUTE FUNCTION storage.update_prefix_level();
 
 -- Functions
 CREATE OR REPLACE FUNCTION storage.get_prefix(name text)
@@ -38,17 +53,24 @@ CREATE OR REPLACE FUNCTION storage.get_prefixes(name text)
 AS $func$
 DECLARE
     parts text[];
-    prefixes text[];
+    prefixes text[] := '{}';
     prefix text;
+    i int;
+    max_length int;
 BEGIN
     -- Split the name into parts by '/'
     parts := string_to_array(name, '/');
-    prefixes := '{}';
+    max_length := array_length(parts, 1);
+    
+    -- Return empty array if no parts or only one part
+    IF max_length IS NULL OR max_length <= 1 THEN
+        RETURN prefixes;
+    END IF;
 
     -- Construct the prefixes, stopping one level below the last part
-    FOR i IN 1..array_length(parts, 1) - 1 LOOP
-            prefix := array_to_string(parts[1:i], '/');
-            prefixes := array_append(prefixes, prefix);
+    FOR i IN 1..(max_length - 1) LOOP
+        prefix := array_to_string(parts[1:i], '/');
+        prefixes := array_append(prefixes, prefix);
     END LOOP;
 
     RETURN prefixes;
