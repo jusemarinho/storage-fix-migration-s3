@@ -3,34 +3,41 @@ CREATE TABLE IF NOT EXISTS storage.s3_multipart_uploads (
     in_progress_size int NOT NULL default 0,
     upload_signature text NOT NULL,
     bucket_id text NOT NULL references storage.buckets(id),
-    key text COLLATE "C" NOT NULL ,
+    key text COLLATE "C" NOT NULL,
     version text NOT NULL,
     owner_id text NULL,
     created_at timestamptz NOT NULL default now()
 );
 
 CREATE TABLE IF NOT EXISTS storage.s3_multipart_uploads_parts (
-     id uuid PRIMARY KEY default gen_random_uuid(),
-     upload_id text NOT NULL references storage.s3_multipart_uploads(id) ON DELETE CASCADE,
-     size int NOT NULL default 0,
-     part_number int NOT NULL,
-     bucket_id text NOT NULL references storage.buckets(id),
-     key text COLLATE "C" NOT NULL,
-     etag text NOT NULL,
-     owner_id text NULL,
-     version text NOT NULL,
-     created_at timestamptz NOT NULL default now()
+    id uuid PRIMARY KEY default gen_random_uuid(),
+    upload_id text NOT NULL references storage.s3_multipart_uploads(id) ON DELETE CASCADE,
+    size int NOT NULL default 0,
+    part_number int NOT NULL,
+    bucket_id text NOT NULL references storage.buckets(id),
+    key text COLLATE "C" NOT NULL,
+    etag text NOT NULL,
+    owner_id text NULL,
+    version text NOT NULL,
+    created_at timestamptz NOT NULL default now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_multipart_uploads_list
-    ON storage.s3_multipart_uploads (bucket_id, (key COLLATE "C"), created_at ASC);
+    ON storage.s3_multipart_uploads (bucket_id, key, created_at ASC);
 
-CREATE OR REPLACE FUNCTION storage.list_multipart_uploads_with_delimiter(bucket_id text, prefix_param text, delimiter_param text, max_keys integer default 100, next_key_token text DEFAULT '', next_upload_token text default '')
-    RETURNS TABLE (key text, id text, created_at timestamptz) AS
+CREATE OR REPLACE FUNCTION storage.list_multipart_uploads_with_delimiter(
+    bucket_id text,
+    prefix_param text,
+    delimiter_param text,
+    max_keys integer default 100,
+    next_key_token text DEFAULT '',
+    next_upload_token text default ''
+)
+RETURNS TABLE (key text, id text, created_at timestamptz) AS
 $$
 BEGIN
     RETURN QUERY EXECUTE
-        'SELECT DISTINCT ON(key COLLATE "C") * from (
+        'SELECT DISTINCT ON(key) * from (
             SELECT
                 CASE
                     WHEN position($2 IN substring(key from length($1) + 1)) > 0 THEN
@@ -50,7 +57,7 @@ BEGIN
                                 substring(key from 1 for length($1) + position($2 IN substring(key from length($1) + 1))) COLLATE "C" > $4
                             ELSE
                                 key COLLATE "C" > $4
-                            END
+                        END
                     ELSE
                         true
                 END AND
@@ -61,8 +68,9 @@ BEGIN
                         true
                     END
             ORDER BY
-                key COLLATE "C" ASC, created_at ASC) as e order by key COLLATE "C" LIMIT $3'
-        USING prefix_param, delimiter_param, max_keys, next_key_token, bucket_id, next_upload_token;
+                key COLLATE "C" ASC, created_at ASC
+        ) as e order by key COLLATE "C" LIMIT $3'
+    USING prefix_param, delimiter_param, max_keys, next_key_token, bucket_id, next_upload_token;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -75,8 +83,8 @@ DECLARE
     authenticated_role text = COALESCE(current_setting('storage.authenticated_role', true), 'authenticated');
     service_role text = COALESCE(current_setting('storage.service_role', true), 'service_role');
 BEGIN
-    EXECUTE 'revoke all on storage.s3_multipart_uploads from ' || anon_role || ', ' || authenticated_role;
-    EXECUTE 'revoke all on storage.s3_multipart_uploads_parts from ' || anon_role || ', ' || authenticated_role;
+    EXECUTE 'REVOKE ALL ON storage.s3_multipart_uploads FROM ' || anon_role || ', ' || authenticated_role;
+    EXECUTE 'REVOKE ALL ON storage.s3_multipart_uploads_parts FROM ' || anon_role || ', ' || authenticated_role;
     EXECUTE 'GRANT ALL ON TABLE storage.s3_multipart_uploads TO ' || service_role;
     EXECUTE 'GRANT ALL ON TABLE storage.s3_multipart_uploads_parts TO ' || service_role;
     EXECUTE 'GRANT SELECT ON TABLE storage.s3_multipart_uploads TO ' || authenticated_role || ', ' || anon_role;
